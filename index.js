@@ -53,17 +53,21 @@ const commands = [
                 .setRequired(true))
 ].map(cmd => cmd.toJSON());
 
-// Register commands with Discord
+// ================= REGISTER COMMANDS =================
 const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
-(async () => {
+
+async function registerCommands() {
     try {
         console.log('Registering commands...');
         await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
         console.log('Commands registered.');
     } catch (err) {
-        console.error(err);
+        console.error('Error registering commands:', err);
     }
-})();
+}
+
+// Register commands immediately when bot starts
+registerCommands();
 
 // ================= BOT EVENTS =================
 client.on('ready', () => {
