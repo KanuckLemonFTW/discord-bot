@@ -127,15 +127,17 @@ client.on('interactionCreate', async i => {
   // ---------- SETUP LOGS ----------
   if (i.commandName === 'setup-logs') {
     if (!isOwner(i)) return i.reply({ content: 'Owner only.', ephemeral: true });
+    await i.deferReply({ ephemeral: true });
     data.logs.ban = i.options.getChannel('ban_log').id;
     data.logs.kick = i.options.getChannel('kick_log').id;
     saveData();
-    return i.reply({ content: '✅ Log channels set.', ephemeral: true });
+    return i.editReply({ content: '✅ Log channels set.' });
   }
 
   // ---------- PERMISSIONS ----------
   if (i.commandName.startsWith('permissions')) {
     if (!isOwner(i)) return i.reply({ content: 'Owner only.', ephemeral: true });
+    await i.deferReply({ ephemeral: true });
 
     const role = i.options.getRole('role');
     const user = i.options.getUser('user');
@@ -144,14 +146,14 @@ client.on('interactionCreate', async i => {
       if (role) data.permissions.roles.push(role.id);
       if (user) data.permissions.users.push(user.id);
       saveData();
-      return i.reply({ content: '✅ Permission added.', ephemeral: true });
+      return i.editReply({ content: '✅ Permission added.' });
     }
 
     if (i.commandName === 'permissions-remove') {
       if (role) data.permissions.roles = data.permissions.roles.filter(r => r !== role.id);
       if (user) data.permissions.users = data.permissions.users.filter(u => u !== user.id);
       saveData();
-      return i.reply({ content: '✅ Permission removed.', ephemeral: true });
+      return i.editReply({ content: '✅ Permission removed.' });
     }
 
     if (i.commandName === 'permissions-list') {
@@ -168,6 +170,7 @@ client.on('interactionCreate', async i => {
   if (['global-ban','global-unban'].includes(i.commandName)) {
     if (!hasPermission(i.member))
       return i.reply({ content: '❌ Not authorized.', ephemeral: true });
+    await i.deferReply({ ephemeral: true });
 
     const user = i.options.getUser('user');
     const reason = i.options.getString('reason');
@@ -200,32 +203,40 @@ client.on('interactionCreate', async i => {
 
     log(isBan ? 'ban' : 'unban', embed);
 
-    return i.reply({ content: `✅ ${isBan ? 'Banned' : 'Unbanned'} in ${count} servers.`, ephemeral: true });
+    return i.editReply({ content: `✅ ${isBan ? 'Banned' : 'Unbanned'} in ${count} servers.` });
   }
 
   // ---------- SETUP ROLE REQUEST ----------
   if (i.commandName === 'setup-rolerequest') {
     if (!isOwner(i)) return i.reply({ content: 'Owner only.', ephemeral: true });
+    await i.deferReply({ ephemeral: true });
     data.roleRequestChannel = i.options.getChannel('channel').id;
     saveData();
-    return i.reply({ content: '✅ Role request channel set.', ephemeral: true });
+    return i.editReply({ content: '✅ Role request channel set.' });
   }
 
   // ---------- REQUEST ROLE ----------
   if (i.commandName === 'request-role') {
+    await i.deferReply({ ephemeral: true });
+
     const requestedRole = i.options.getRole('roles');
     const approver = i.options.getUser('approved_by');
     const notes = i.options.getString('notes') || 'No notes provided';
 
     const member = i.guild.members.cache.get(approver.id);
+    if (!member) return i.editReply({ content: '❌ Approver not found in this server.', ephemeral: true });
+
     if (!member.roles.cache.has(ROLE_PERMISSIONS_ROLE_ID))
-      return i.reply({ content: '❌ Approver does not have Role Permissions Role.', ephemeral: true });
+      return i.editReply({ content: '❌ Approver does not have the required Role Permissions Role.', ephemeral: true });
 
     if (member.roles.highest.position < requestedRole.position)
-      return i.reply({ content: '❌ Approver cannot assign role higher than their top role.', ephemeral: true });
+      return i.editReply({ content: '❌ Approver cannot assign roles higher than their top role.', ephemeral: true });
 
-    if (!data.roleRequestChannel)
-      return i.reply({ content: '❌ Role request channel not set.', ephemeral: true });
+    let channel = client.channels.cache.get(data.roleRequestChannel);
+    if (!channel) {
+      try { channel = await client.channels.fetch(data.roleRequestChannel); }
+      catch { return i.editReply({ content: '❌ Cannot find role request channel.', ephemeral: true }); }
+    }
 
     const embed = new EmbedBuilder()
       .setTitle('Role Request')
@@ -249,10 +260,8 @@ client.on('interactionCreate', async i => {
         .setStyle(ButtonStyle.Danger)
     );
 
-    const channel = client.channels.cache.get(data.roleRequestChannel);
     await channel.send({ embeds: [embed], components: [row] });
-
-    return i.reply({ content: '✅ Role request submitted.', ephemeral: true });
+    await i.editReply({ content: '✅ Role request submitted.' });
   }
 });
 
@@ -263,12 +272,14 @@ client.on('interactionCreate', async i => {
   const [action, requesterId, roleId] = i.customId.split('_');
   const approverMember = i.guild.members.cache.get(i.user.id);
 
-  // Only selected approver can click
   if (!approverMember) return;
+
   const requestedRole = i.guild.roles.cache.get(roleId);
   if (!requestedRole) return i.reply({ content: '❌ Role not found.', ephemeral: true });
+
   if (!approverMember.roles.cache.has(ROLE_PERMISSIONS_ROLE_ID))
     return i.reply({ content: '❌ You do not have permission.', ephemeral: true });
+
   if (approverMember.roles.highest.position < requestedRole.position)
     return i.reply({ content: '❌ Cannot assign role higher than your top role.', ephemeral: true });
 
@@ -285,5 +296,3 @@ client.on('interactionCreate', async i => {
 });
 
 client.login(DISCORD_TOKEN);
-
-
