@@ -1,12 +1,6 @@
 {
-  "permissions": {
-    "roles": [],
-    "users": []
-  },
-  "logs": {
-    "ban": null,
-    "unban": null
-  },
+  "permissions": { "roles": [], "users": [] },
+  "logs": { "ban": null, "unban": null, "kick": null, "mute": null },
   "roleRequestChannel": null,
   "verifyLogChannel": null
 }
