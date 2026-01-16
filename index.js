@@ -16,6 +16,8 @@ const CLIENT_ID = process.env.CLIENT_ID;
 const ADMIN_DM_ID = '753300433682038956';
 const ROLE_PERMISSIONS_ROLE_ID = '1459420013449580596';
 const DATA_FILE = './data.json';
+const FORCEVERIFY_ROLE_ID = '1460871120365289482';
+const FORCEVERIFY_EXEC_ROLE_ID = '1459413983881723964';
 
 // ===== LOAD / SAVE DATA =====
 function loadData() {
@@ -23,7 +25,8 @@ function loadData() {
     fs.writeFileSync(DATA_FILE, JSON.stringify({
       permissions: { roles: [], users: [] },
       logs: { ban: null, unban: null },
-      roleRequestChannel: null
+      roleRequestChannel: null,
+      verifyLogChannel: null
     }, null, 2));
   }
   return JSON.parse(fs.readFileSync(DATA_FILE));
@@ -47,51 +50,61 @@ const client = new Client({
 
 // ===== COMMANDS =====
 const commands = [
+  // Logs setup
   new SlashCommandBuilder()
     .setName('setup-logs')
     .setDescription('Setup log channels')
     .addChannelOption(o => o.setName('ban_log').setDescription('Ban log channel').setRequired(true))
     .addChannelOption(o => o.setName('kick_log').setDescription('Kick log channel').setRequired(true)),
 
+  // Permissions
   new SlashCommandBuilder()
     .setName('permissions-add')
     .setDescription('Allow a role or user')
     .addRoleOption(o => o.setName('role').setDescription('Role to allow'))
     .addUserOption(o => o.setName('user').setDescription('User to allow')),
-
   new SlashCommandBuilder()
     .setName('permissions-remove')
     .setDescription('Remove a role or user')
     .addRoleOption(o => o.setName('role').setDescription('Role to remove'))
     .addUserOption(o => o.setName('user').setDescription('User to remove')),
-
   new SlashCommandBuilder()
     .setName('permissions-list')
     .setDescription('List allowed roles and users'),
 
+  // Global Ban/Unban
   new SlashCommandBuilder()
     .setName('global-ban')
     .setDescription('Ban a user from all servers')
     .addUserOption(o => o.setName('user').setDescription('User').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('Reason').setRequired(true)),
-
   new SlashCommandBuilder()
     .setName('global-unban')
     .setDescription('Unban a user from all servers')
     .addUserOption(o => o.setName('user').setDescription('User').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('Reason').setRequired(true)),
 
+  // Role Requests
   new SlashCommandBuilder()
     .setName('setup-rolerequest')
     .setDescription('Set the channel for role requests')
     .addChannelOption(o => o.setName('channel').setDescription('Channel for role requests').setRequired(true)),
-
   new SlashCommandBuilder()
     .setName('request-role')
     .setDescription('Request roles with an approver')
     .addRoleOption(o => o.setName('roles').setDescription('Role to request').setRequired(true))
     .addUserOption(o => o.setName('approved_by').setDescription('Person who can approve').setRequired(true))
-    .addStringOption(o => o.setName('notes').setDescription('Notes for the request').setRequired(false))
+    .addStringOption(o => o.setName('notes').setDescription('Notes for the request').setRequired(false)),
+
+  // Force Verify
+  new SlashCommandBuilder()
+    .setName('config-verifylog')
+    .setDescription('Set the verify log channel')
+    .addChannelOption(o => o.setName('channel').setDescription('Channel for verify logs').setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('forceverify')
+    .setDescription('Force verify a member by giving them the verified role')
+    .addUserOption(o => o.setName('user').setDescription('Member to verify').setRequired(true))
 ].map(c => c.toJSON());
 
 // ===== REGISTER COMMANDS =====
@@ -250,9 +263,50 @@ client.on('interactionCreate', async i => {
     await channel.send({ embeds: [embed], components: [row] });
     await i.editReply({ content: '✅ Role request submitted.' });
   }
+
+  // --- Config Verify Log ---
+  if (i.commandName === 'config-verifylog') {
+    if (!isOwner(i)) return i.reply({ content: 'Owner only.', ephemeral: true });
+    await i.deferReply({ ephemeral: true });
+    data.verifyLogChannel = i.options.getChannel('channel').id;
+    saveData();
+    return i.editReply({ content: '✅ Verify log channel set.' });
+  }
+
+  // --- Force Verify ---
+  if (i.commandName === 'forceverify') {
+    await i.deferReply({ ephemeral: true });
+    const executor = i.member;
+    if (!executor.roles.cache.has(FORCEVERIFY_EXEC_ROLE_ID))
+      return i.editReply({ content: '❌ You do not have permission to run this command.' });
+
+    const targetUser = i.options.getUser('user');
+    const targetMember = await i.guild.members.fetch(targetUser.id);
+    const verifiedRole = i.guild.roles.cache.get(FORCEVERIFY_ROLE_ID);
+    if (!verifiedRole) return i.editReply({ content: '❌ Verified role not found.' });
+
+    await targetMember.roles.add(verifiedRole);
+
+    const embed = new EmbedBuilder()
+      .setTitle('Force Verify')
+      .setColor(0x00FF00)
+      .addFields(
+        { name: 'Member', value: `${targetUser.tag} (${targetUser.id})` },
+        { name: 'Executed By', value: executor.user.tag },
+        { name: 'Role Given', value: verifiedRole.name }
+      )
+      .setTimestamp();
+
+    if (data.verifyLogChannel) {
+      const logChannel = i.guild.channels.cache.get(data.verifyLogChannel);
+      if (logChannel?.isTextBased()) logChannel.send({ embeds: [embed] });
+    }
+
+    return i.editReply({ content: `✅ ${targetUser.tag} has been force verified.` });
+  }
 });
 
-// ===== BUTTON HANDLER (SECURE) =====
+// ===== BUTTON HANDLER (SECURE ROLE REQUEST) =====
 client.on('interactionCreate', async i => {
   if (!i.isButton()) return;
 
@@ -266,13 +320,8 @@ client.on('interactionCreate', async i => {
 
   if (i.user.id !== approverMember.id) {
     await i.reply({ content: '❌ Unauthorized click. Security team has been notified.', ephemeral: true });
-
-    // Notify approver in channel
     const channel = i.channel;
-    if (channel?.isTextBased()) {
-      channel.send({ content: `⚠️ <@${approverMember.id}>, user ${i.user.tag} tried to click your role request buttons.` });
-    }
-
+    if (channel?.isTextBased()) channel.send({ content: `⚠️ <@${approverMember.id}>, user ${i.user.tag} tried to click your role request buttons.` });
     try { await approverMember.send(`⚠️ User ${i.user.tag} tried to interact with a role request they are not authorized for.`); } catch {}
     return;
   }
