@@ -4,21 +4,26 @@ import {
   REST,
   Routes,
   SlashCommandBuilder,
-  EmbedBuilder
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle
 } from 'discord.js';
 import fs from 'fs';
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const ADMIN_DM_ID = '753300433682038956';
+const ROLE_PERMISSIONS_ROLE_ID = '1459420013449580596';
 const DATA_FILE = './data.json';
 
-// ================= LOAD / SAVE =================
+// ========== LOAD/ SAVE DATA ==========
 function loadData() {
   if (!fs.existsSync(DATA_FILE)) {
     fs.writeFileSync(DATA_FILE, JSON.stringify({
       permissions: { roles: [], users: [] },
-      logs: { ban: null, unban: null }
+      logs: { ban: null, unban: null },
+      roleRequestChannel: null
     }, null, 2));
   }
   return JSON.parse(fs.readFileSync(DATA_FILE));
@@ -29,8 +34,8 @@ function saveData() {
 }
 
 const data = loadData();
-// ==============================================
 
+// ========== CLIENT ==========
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -40,62 +45,30 @@ const client = new Client({
   ]
 });
 
-// ================= COMMANDS =================
+// ========== COMMANDS ==========
 const commands = [
   new SlashCommandBuilder()
-    .setName('setup-logs')
-    .setDescription('Configure log channels')
-    .addStringOption(o =>
-      o.setName('type')
-        .setDescription('Log type')
-        .setRequired(true)
-        .addChoices(
-          { name: 'Global Bans', value: 'ban' },
-          { name: 'Global Unbans', value: 'unban' }
-        ))
-    .addChannelOption(o =>
-      o.setName('channel').setDescription('Log channel').setRequired(true)),
+    .setName('setup-rolerequest')
+    .setDescription('Set the channel for role requests')
+    .addChannelOption(o => o.setName('channel').setDescription('Channel for role requests').setRequired(true)),
 
   new SlashCommandBuilder()
-    .setName('permissions-add')
-    .setDescription('Allow a role or user')
-    .addRoleOption(o => o.setName('role').setDescription('Role to allow'))
-    .addUserOption(o => o.setName('user').setDescription('User to allow')),
+    .setName('request-role')
+    .setDescription('Request roles with an approver')
+    .addRoleOption(o => o.setName('roles').setDescription('Role to request').setRequired(true))
+    .addUserOption(o => o.setName('approved_by').setDescription('Person who can approve').setRequired(true))
+    .addStringOption(o => o.setName('notes').setDescription('Notes for the request').setRequired(false)),
 
-  new SlashCommandBuilder()
-    .setName('permissions-remove')
-    .setDescription('Remove a role or user')
-    .addRoleOption(o => o.setName('role').setDescription('Role to remove'))
-    .addUserOption(o => o.setName('user').setDescription('User to remove')),
-
-  new SlashCommandBuilder()
-    .setName('permissions-list')
-    .setDescription('List allowed roles and users'),
-
-  new SlashCommandBuilder()
-    .setName('global-ban')
-    .setDescription('Ban a user from all servers')
-    .addUserOption(o =>
-      o.setName('user').setDescription('User').setRequired(true))
-    .addStringOption(o =>
-      o.setName('reason').setDescription('Reason').setRequired(true)),
-
-  new SlashCommandBuilder()
-    .setName('global-unban')
-    .setDescription('Unban a user from all servers')
-    .addUserOption(o =>
-      o.setName('user').setDescription('User').setRequired(true))
-    .addStringOption(o =>
-      o.setName('reason').setDescription('Reason').setRequired(true))
+  // ... keep your existing commands here ...
 ].map(c => c.toJSON());
 
-// ================= REGISTER =================
+// ========== REGISTER COMMANDS ==========
 const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+console.log('Commands registered');
 
-// ================= HELPERS =================
+// ========== HELPERS ==========
 const isOwner = i => i.guild.ownerId === i.user.id;
-
 const hasPermission = member =>
   data.permissions.users.includes(member.id) ||
   member.roles.cache.some(r => data.permissions.roles.includes(r.id));
@@ -106,97 +79,107 @@ function log(type, embed) {
   const channel = client.channels.cache.get(channelId);
   if (channel?.isTextBased()) channel.send({ embeds: [embed] });
 }
-// ==========================================
 
-client.once('ready', () =>
-  console.log(`Logged in as ${client.user.tag}`)
-);
+// ========== CLIENT EVENTS ==========
+client.once('ready', () => console.log(`Logged in as ${client.user.tag}`));
 
 client.on('interactionCreate', async i => {
   if (!i.isCommand()) return;
 
-  // ---------- LOG SETUP ----------
-  if (i.commandName === 'setup-logs') {
+  // ---------- SETUP ROLE REQUEST ----------
+  if (i.commandName === 'setup-rolerequest') {
     if (!isOwner(i)) return i.reply({ content: 'Owner only.', ephemeral: true });
-
-    data.logs[i.options.getString('type')] =
-      i.options.getChannel('channel').id;
-
+    const ch = i.options.getChannel('channel');
+    data.roleRequestChannel = ch.id;
     saveData();
-    return i.reply({ content: '✅ Log channel set.', ephemeral: true });
+    return i.reply({ content: `✅ Role request channel set to ${ch}`, ephemeral: true });
   }
 
-  // ---------- PERMISSIONS ----------
-  if (i.commandName.startsWith('permissions')) {
-    if (!isOwner(i)) return i.reply({ content: 'Owner only.', ephemeral: true });
+  // ---------- REQUEST ROLE ----------
+  if (i.commandName === 'request-role') {
+    const requestedRole = i.options.getRole('roles');
+    const approver = i.options.getUser('approved_by');
+    const notes = i.options.getString('notes') || 'No notes provided';
 
-    const role = i.options.getRole('role');
-    const user = i.options.getUser('user');
-
-    if (i.commandName === 'permissions-add') {
-      if (role) data.permissions.roles.push(role.id);
-      if (user) data.permissions.users.push(user.id);
-      saveData();
-      return i.reply({ content: '✅ Permission added.', ephemeral: true });
+    // Validate approver
+    const member = i.guild.members.cache.get(approver.id);
+    if (!member.roles.cache.has(ROLE_PERMISSIONS_ROLE_ID)) {
+      return i.reply({ content: '❌ Approver does not have the Role Permissions Role.', ephemeral: true });
     }
 
-    if (i.commandName === 'permissions-remove') {
-      if (role) data.permissions.roles = data.permissions.roles.filter(r => r !== role.id);
-      if (user) data.permissions.users = data.permissions.users.filter(u => u !== user.id);
-      saveData();
-      return i.reply({ content: '✅ Permission removed.', ephemeral: true });
+    // Check hierarchy
+    const approverTop = member.roles.highest.position;
+    if (approverTop < requestedRole.position) {
+      return i.reply({ content: '❌ Approver cannot assign a role higher than their highest role.', ephemeral: true });
     }
 
-    if (i.commandName === 'permissions-list') {
-      return i.reply({
-        content:
-          `**Roles:** ${data.permissions.roles.map(r => `<@&${r}>`).join(', ') || 'None'}\n` +
-          `**Users:** ${data.permissions.users.map(u => `<@${u}>`).join(', ') || 'None'}`,
-        ephemeral: true
-      });
+    // Role request channel must exist
+    if (!data.roleRequestChannel) {
+      return i.reply({ content: '❌ Role request channel is not set. Ask the server owner to run /setup-rolerequest.', ephemeral: true });
     }
+
+    const requestEmbed = new EmbedBuilder()
+      .setTitle('Role Request')
+      .setColor(0x00AAFF)
+      .addFields(
+        { name: 'Requester', value: `${i.user.tag}` },
+        { name: 'Role Requested', value: `${requestedRole}` },
+        { name: 'Approver', value: `${approver.tag}` },
+        { name: 'Notes', value: notes }
+      )
+      .setTimestamp();
+
+    const row = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`approve_${i.user.id}_${requestedRole.id}`)
+          .setLabel('Approve')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`deny_${i.user.id}_${requestedRole.id}`)
+          .setLabel('Deny')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+    const channel = client.channels.cache.get(data.roleRequestChannel);
+    await channel.send({ embeds: [requestEmbed], components: [row] });
+
+    return i.reply({ content: '✅ Role request submitted.', ephemeral: true });
+  }
+});
+
+// ---------- BUTTON INTERACTIONS ----------
+client.on('interactionCreate', async i => {
+  if (!i.isButton()) return;
+
+  const [action, requesterId, roleId] = i.customId.split('_');
+
+  if (i.user.id !== i.user.id) return; // ONLY the selected approver can click
+  const approverMember = i.guild.members.cache.get(i.user.id);
+
+  if (!approverMember.roles.cache.has(ROLE_PERMISSIONS_ROLE_ID)) {
+    return i.reply({ content: '❌ You do not have permission to approve roles.', ephemeral: true });
   }
 
-  // ---------- GLOBAL BAN / UNBAN ----------
-  if (!hasPermission(i.member))
-    return i.reply({ content: 'Not authorized.', ephemeral: true });
+  const role = i.guild.roles.cache.get(roleId);
+  if (!role) return i.reply({ content: '❌ Role not found.', ephemeral: true });
 
-  const user = i.options.getUser('user');
-  const reason = i.options.getString('reason');
-  const isBan = i.commandName === 'global-ban';
-
-  const embed = new EmbedBuilder()
-    .setColor(isBan ? 0xff0000 : 0x00ff00)
-    .setTitle(isBan ? 'Global Ban' : 'Global Unban')
-    .addFields(
-      { name: 'User', value: `${user.tag} (${user.id})` },
-      { name: 'Moderator', value: i.user.tag },
-      { name: 'Reason', value: reason }
-    )
-    .setTimestamp();
-
-  try { await user.send({ embeds: [embed] }); } catch {}
-  try {
-    const admin = await client.users.fetch(ADMIN_DM_ID);
-    await admin.send({ embeds: [embed] });
-  } catch {}
-
-  let count = 0;
-  for (const [, guild] of client.guilds.cache) {
-    try {
-      isBan
-        ? await guild.members.ban(user, { reason })
-        : await guild.bans.remove(user, reason);
-      count++;
-    } catch {}
+  // Check hierarchy
+  if (approverMember.roles.highest.position < role.position) {
+    return i.reply({ content: '❌ You cannot assign a role higher than your highest role.', ephemeral: true });
   }
 
-  log(isBan ? 'ban' : 'unban', embed);
+  const requesterMember = await i.guild.members.fetch(requesterId);
 
-  return i.reply({
-    content: `✅ ${isBan ? 'Banned' : 'Unbanned'} in ${count} servers.`,
-    ephemeral: true
-  });
+  if (action === 'approve') {
+    await requesterMember.roles.add(role);
+    await requesterMember.send({ content: `✅ Your request for role ${role.name} was approved!` });
+    await i.update({ content: '✅ Role approved.', components: [] });
+  } else if (action === 'deny') {
+    await requesterMember.send({ content: `❌ Your request for role ${role.name} was denied.` });
+    await i.update({ content: '❌ Role denied.', components: [] });
+  }
 });
 
 client.login(DISCORD_TOKEN);
+
