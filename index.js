@@ -7,11 +7,9 @@ import {
   EmbedBuilder
 } from 'discord.js';
 
-// ================= CONFIG =================
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const ADMIN_DM_ID = '753300433682038956';
-// =========================================
 
 const client = new Client({
   intents: [
@@ -22,19 +20,19 @@ const client = new Client({
   ]
 });
 
-// ================= IN-MEMORY STORAGE =================
+// ================= STORAGE =================
 const logChannels = {
   ban: null,
   kick: null
 };
 
 const permissions = {
-  roles: new Set(), // role IDs
-  users: new Set()  // user IDs
+  roles: new Set(),
+  users: new Set()
 };
-// ====================================================
+// ===========================================
 
-// ================= SLASH COMMANDS =================
+// ================= COMMANDS =================
 const commands = [
   new SlashCommandBuilder()
     .setName('setup-logs')
@@ -48,9 +46,9 @@ const commands = [
     .setName('permissions-add')
     .setDescription('Allow a role or user to use global moderation')
     .addRoleOption(o =>
-      o.setName('role').setDescription('Role to allow').setRequired(false))
+      o.setName('role').setDescription('Role to allow'))
     .addUserOption(o =>
-      o.setName('user').setDescription('User to allow').setRequired(false)),
+      o.setName('user').setDescription('User to allow')),
 
   new SlashCommandBuilder()
     .setName('global-ban')
@@ -69,23 +67,22 @@ const commands = [
       o.setName('reason').setDescription('Reason').setRequired(true))
 ].map(c => c.toJSON());
 
-// ================= REGISTER COMMANDS =================
+// ================= REGISTER =================
 const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
-
-await rest.put(
-  Routes.applicationCommands(CLIENT_ID),
-  { body: commands }
-);
-
+await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
 console.log('Commands registered');
 
-// ================= PERMISSION CHECK =================
+// ================= HELPERS =================
+function isGuildOwner(interaction) {
+  return interaction.guild?.ownerId === interaction.user.id;
+}
+
 function hasPermission(member) {
   if (permissions.users.has(member.id)) return true;
   return member.roles.cache.some(r => permissions.roles.has(r.id));
 }
+// ===========================================
 
-// ================= BOT EVENTS =================
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
@@ -95,19 +92,37 @@ client.on('interactionCreate', async interaction => {
 
   // ---------- SETUP LOGS ----------
   if (interaction.commandName === 'setup-logs') {
+    if (!isGuildOwner(interaction)) {
+      return interaction.reply({
+        content: '❌ Only the **server owner** can run this command.',
+        ephemeral: true
+      });
+    }
+
     logChannels.ban = interaction.options.getChannel('ban_log').id;
     logChannels.kick = interaction.options.getChannel('kick_log').id;
-    return interaction.reply({ content: '✅ Log channels set.', ephemeral: true });
+
+    return interaction.reply({
+      content: '✅ Log channels configured.',
+      ephemeral: true
+    });
   }
 
   // ---------- PERMISSIONS ADD ----------
   if (interaction.commandName === 'permissions-add') {
+    if (!isGuildOwner(interaction)) {
+      return interaction.reply({
+        content: '❌ Only the **server owner** can manage permissions.',
+        ephemeral: true
+      });
+    }
+
     const role = interaction.options.getRole('role');
     const user = interaction.options.getUser('user');
 
     if (!role && !user) {
       return interaction.reply({
-        content: '❌ You must specify a role or a user.',
+        content: '❌ Provide a role or a user.',
         ephemeral: true
       });
     }
@@ -116,7 +131,7 @@ client.on('interactionCreate', async interaction => {
     if (user) permissions.users.add(user.id);
 
     return interaction.reply({
-      content: `✅ Permission added:\n${role ? `Role: ${role}` : ''}\n${user ? `User: ${user.tag}` : ''}`,
+      content: `✅ Permission granted:\n${role ? `• Role: ${role}` : ''}\n${user ? `• User: ${user.tag}` : ''}`,
       ephemeral: true
     });
   }
@@ -144,7 +159,6 @@ client.on('interactionCreate', async interaction => {
       )
       .setTimestamp();
 
-    // DM user + admin
     try { await user.send({ embeds: [embed] }); } catch {}
     try {
       const admin = await client.users.fetch(ADMIN_DM_ID);
@@ -162,7 +176,6 @@ client.on('interactionCreate', async interaction => {
       } catch {}
     }
 
-    // Log
     if (logChannels.ban) {
       const ch = client.channels.cache.get(logChannels.ban);
       if (ch?.isTextBased()) ch.send({ embeds: [embed] });
@@ -175,5 +188,4 @@ client.on('interactionCreate', async interaction => {
   }
 });
 
-// ================= LOGIN =================
 client.login(DISCORD_TOKEN);
