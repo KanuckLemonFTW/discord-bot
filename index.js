@@ -17,7 +17,7 @@ const ADMIN_DM_ID = '753300433682038956';
 const ROLE_PERMISSIONS_ROLE_ID = '1459420013449580596';
 const DATA_FILE = './data.json';
 
-// ========== LOAD / SAVE DATA ==========
+// ======= LOAD / SAVE DATA =======
 function loadData() {
   if (!fs.existsSync(DATA_FILE)) {
     fs.writeFileSync(DATA_FILE, JSON.stringify({
@@ -35,7 +35,7 @@ function saveData() {
 
 const data = loadData();
 
-// ========== CLIENT ==========
+// ======= CLIENT =======
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -45,16 +45,16 @@ const client = new Client({
   ]
 });
 
-// ========== COMMANDS ==========
+// ======= COMMANDS =======
 const commands = [
-  // LOGS SETUP
+  // Setup logs
   new SlashCommandBuilder()
     .setName('setup-logs')
     .setDescription('Setup log channels')
     .addChannelOption(o => o.setName('ban_log').setDescription('Ban log channel').setRequired(true))
     .addChannelOption(o => o.setName('kick_log').setDescription('Kick log channel').setRequired(true)),
 
-  // PERMISSIONS MANAGEMENT
+  // Permissions management
   new SlashCommandBuilder()
     .setName('permissions-add')
     .setDescription('Allow a role or user')
@@ -71,7 +71,7 @@ const commands = [
     .setName('permissions-list')
     .setDescription('List allowed roles and users'),
 
-  // GLOBAL BAN / UNBAN
+  // Global ban/unban
   new SlashCommandBuilder()
     .setName('global-ban')
     .setDescription('Ban a user from all servers')
@@ -84,7 +84,7 @@ const commands = [
     .addUserOption(o => o.setName('user').setDescription('User').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('Reason').setRequired(true)),
 
-  // ROLE REQUEST SYSTEM
+  // Role request system
   new SlashCommandBuilder()
     .setName('setup-rolerequest')
     .setDescription('Set the channel for role requests')
@@ -98,12 +98,12 @@ const commands = [
     .addStringOption(o => o.setName('notes').setDescription('Notes for the request').setRequired(false))
 ].map(c => c.toJSON());
 
-// ========== REGISTER COMMANDS ==========
+// ======= REGISTER COMMANDS =======
 const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
 console.log('Commands registered');
 
-// ========== HELPERS ==========
+// ======= HELPERS =======
 const isOwner = i => i.guild.ownerId === i.user.id;
 
 const hasPermission = member =>
@@ -117,14 +117,14 @@ function log(type, embed) {
   if (channel?.isTextBased()) channel.send({ embeds: [embed] });
 }
 
-// ========== BOT READY ==========
+// ======= READY =======
 client.once('ready', () => console.log(`Logged in as ${client.user.tag}`));
 
-// ========== INTERACTION HANDLER ==========
+// ======= INTERACTION HANDLER =======
 client.on('interactionCreate', async i => {
   if (!i.isCommand()) return;
 
-  // ---------- SETUP LOGS ----------
+  // ---------- Setup Logs ----------
   if (i.commandName === 'setup-logs') {
     if (!isOwner(i)) return i.reply({ content: 'Owner only.', ephemeral: true });
     await i.deferReply({ ephemeral: true });
@@ -134,7 +134,7 @@ client.on('interactionCreate', async i => {
     return i.editReply({ content: '✅ Log channels set.' });
   }
 
-  // ---------- PERMISSIONS ----------
+  // ---------- Permissions ----------
   if (i.commandName.startsWith('permissions')) {
     if (!isOwner(i)) return i.reply({ content: 'Owner only.', ephemeral: true });
     await i.deferReply({ ephemeral: true });
@@ -166,7 +166,7 @@ client.on('interactionCreate', async i => {
     }
   }
 
-  // ---------- GLOBAL BAN / UNBAN ----------
+  // ---------- Global Ban / Unban ----------
   if (['global-ban','global-unban'].includes(i.commandName)) {
     if (!hasPermission(i.member))
       return i.reply({ content: '❌ Not authorized.', ephemeral: true });
@@ -206,7 +206,7 @@ client.on('interactionCreate', async i => {
     return i.editReply({ content: `✅ ${isBan ? 'Banned' : 'Unbanned'} in ${count} servers.` });
   }
 
-  // ---------- SETUP ROLE REQUEST ----------
+  // ---------- Setup Role Request ----------
   if (i.commandName === 'setup-rolerequest') {
     if (!isOwner(i)) return i.reply({ content: 'Owner only.', ephemeral: true });
     await i.deferReply({ ephemeral: true });
@@ -215,7 +215,7 @@ client.on('interactionCreate', async i => {
     return i.editReply({ content: '✅ Role request channel set.' });
   }
 
-  // ---------- REQUEST ROLE ----------
+  // ---------- Request Role ----------
   if (i.commandName === 'request-role') {
     await i.deferReply({ ephemeral: true });
 
@@ -251,11 +251,11 @@ client.on('interactionCreate', async i => {
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`approve_${i.user.id}_${requestedRole.id}`)
+        .setCustomId(`approve_${i.user.id}_${requestedRole.id}_${approver.id}`)
         .setLabel('Approve')
         .setStyle(ButtonStyle.Success),
       new ButtonBuilder()
-        .setCustomId(`deny_${i.user.id}_${requestedRole.id}`)
+        .setCustomId(`deny_${i.user.id}_${requestedRole.id}_${approver.id}`)
         .setLabel('Deny')
         .setStyle(ButtonStyle.Danger)
     );
@@ -265,21 +265,35 @@ client.on('interactionCreate', async i => {
   }
 });
 
-// ---------- BUTTON HANDLER ----------
+// ======= BUTTON HANDLER (SECURE) =======
 client.on('interactionCreate', async i => {
   if (!i.isButton()) return;
 
-  const [action, requesterId, roleId] = i.customId.split('_');
+  const [action, requesterId, roleId, approverId] = i.customId.split('_');
   const approverMember = i.guild.members.cache.get(i.user.id);
-
-  if (!approverMember) return;
-
   const requestedRole = i.guild.roles.cache.get(roleId);
+
   if (!requestedRole) return i.reply({ content: '❌ Role not found.', ephemeral: true });
 
-  if (!approverMember.roles.cache.has(ROLE_PERMISSIONS_ROLE_ID))
-    return i.reply({ content: '❌ You do not have permission.', ephemeral: true });
+  // Only the selected approver can click
+  if (i.user.id !== approverId) {
+    // Notify clicker
+    await i.reply({ content: '❌ Unauthorized click. Security team has been notified.', ephemeral: true });
 
+    // Notify approver
+    try {
+      const approver = await i.guild.members.fetch(approverId);
+      await approver.send(`⚠️ User ${i.user.tag} tried to interact with a role request they are not authorized for.`);
+    } catch {}
+
+    return;
+  }
+
+  // Check Role Permissions Role
+  if (!approverMember.roles.cache.has(ROLE_PERMISSIONS_ROLE_ID))
+    return i.reply({ content: '❌ You no longer have the Role Permissions Role.', ephemeral: true });
+
+  // Check role hierarchy
   if (approverMember.roles.highest.position < requestedRole.position)
     return i.reply({ content: '❌ Cannot assign role higher than your top role.', ephemeral: true });
 
@@ -287,12 +301,5 @@ client.on('interactionCreate', async i => {
 
   if (action === 'approve') {
     await requesterMember.roles.add(requestedRole);
-    await requesterMember.send({ content: `✅ Your request for role ${requestedRole.name} was approved!` });
-    await i.update({ content: '✅ Role approved.', components: [] });
-  } else if (action === 'deny') {
-    await requesterMember.send({ content: `❌ Your request for role ${requestedRole.name} was denied.` });
-    await i.update({ content: '❌ Role denied.', components: [] });
-  }
-});
-
-client.login(DISCORD_TOKEN);
+    await requesterMember.send({ content: `✅ Your request for role ${requestedRole.name} was approved by ${i.user.tag}!` });
+    await i.update({ content: `✅ Role approved by <@${ap
