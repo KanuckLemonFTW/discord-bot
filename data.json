@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "roles": [],
+    "users": []
+  },
+  "logs": {
+    "ban": null,
+    "unban": null
+  }
+}
