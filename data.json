@@ -7,5 +7,6 @@
     "ban": null,
     "unban": null
   },
-  "roleRequestChannel": null
+  "roleRequestChannel": null,
+  "verifyLogChannel": null
 }
