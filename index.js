@@ -6,10 +6,30 @@ import {
   SlashCommandBuilder,
   EmbedBuilder
 } from 'discord.js';
+import fs from 'fs';
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const ADMIN_DM_ID = '753300433682038956';
+const DATA_FILE = './data.json';
+
+// ================= LOAD / SAVE =================
+function loadData() {
+  if (!fs.existsSync(DATA_FILE)) {
+    fs.writeFileSync(DATA_FILE, JSON.stringify({
+      permissions: { roles: [], users: [] },
+      logs: { ban: null, unban: null }
+    }, null, 2));
+  }
+  return JSON.parse(fs.readFileSync(DATA_FILE));
+}
+
+function saveData() {
+  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+}
+
+const data = loadData();
+// ==============================================
 
 const client = new Client({
   intents: [
@@ -20,41 +40,43 @@ const client = new Client({
   ]
 });
 
-// ================= STORAGE =================
-const logChannels = {
-  ban: null,
-  kick: null
-};
-
-const permissions = {
-  roles: new Set(),
-  users: new Set()
-};
-// ===========================================
-
 // ================= COMMANDS =================
 const commands = [
   new SlashCommandBuilder()
     .setName('setup-logs')
-    .setDescription('Setup log channels')
+    .setDescription('Configure log channels')
+    .addStringOption(o =>
+      o.setName('type')
+        .setDescription('Log type')
+        .setRequired(true)
+        .addChoices(
+          { name: 'Global Bans', value: 'ban' },
+          { name: 'Global Unbans', value: 'unban' }
+        ))
     .addChannelOption(o =>
-      o.setName('ban_log').setDescription('Ban log channel').setRequired(true))
-    .addChannelOption(o =>
-      o.setName('kick_log').setDescription('Kick log channel').setRequired(true)),
+      o.setName('channel').setDescription('Log channel').setRequired(true)),
 
   new SlashCommandBuilder()
     .setName('permissions-add')
-    .setDescription('Allow a role or user to use global moderation')
-    .addRoleOption(o =>
-      o.setName('role').setDescription('Role to allow'))
-    .addUserOption(o =>
-      o.setName('user').setDescription('User to allow')),
+    .setDescription('Allow a role or user')
+    .addRoleOption(o => o.setName('role').setDescription('Role to allow'))
+    .addUserOption(o => o.setName('user').setDescription('User to allow')),
+
+  new SlashCommandBuilder()
+    .setName('permissions-remove')
+    .setDescription('Remove a role or user')
+    .addRoleOption(o => o.setName('role').setDescription('Role to remove'))
+    .addUserOption(o => o.setName('user').setDescription('User to remove')),
+
+  new SlashCommandBuilder()
+    .setName('permissions-list')
+    .setDescription('List allowed roles and users'),
 
   new SlashCommandBuilder()
     .setName('global-ban')
     .setDescription('Ban a user from all servers')
     .addUserOption(o =>
-      o.setName('user').setDescription('User to ban').setRequired(true))
+      o.setName('user').setDescription('User').setRequired(true))
     .addStringOption(o =>
       o.setName('reason').setDescription('Reason').setRequired(true)),
 
@@ -62,7 +84,7 @@ const commands = [
     .setName('global-unban')
     .setDescription('Unban a user from all servers')
     .addUserOption(o =>
-      o.setName('user').setDescription('User to unban').setRequired(true))
+      o.setName('user').setDescription('User').setRequired(true))
     .addStringOption(o =>
       o.setName('reason').setDescription('Reason').setRequired(true))
 ].map(c => c.toJSON());
@@ -70,122 +92,111 @@ const commands = [
 // ================= REGISTER =================
 const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-console.log('Commands registered');
 
 // ================= HELPERS =================
-function isGuildOwner(interaction) {
-  return interaction.guild?.ownerId === interaction.user.id;
+const isOwner = i => i.guild.ownerId === i.user.id;
+
+const hasPermission = member =>
+  data.permissions.users.includes(member.id) ||
+  member.roles.cache.some(r => data.permissions.roles.includes(r.id));
+
+function log(type, embed) {
+  const channelId = data.logs[type];
+  if (!channelId) return;
+  const channel = client.channels.cache.get(channelId);
+  if (channel?.isTextBased()) channel.send({ embeds: [embed] });
 }
+// ==========================================
 
-function hasPermission(member) {
-  if (permissions.users.has(member.id)) return true;
-  return member.roles.cache.some(r => permissions.roles.has(r.id));
-}
-// ===========================================
+client.once('ready', () =>
+  console.log(`Logged in as ${client.user.tag}`)
+);
 
-client.once('ready', () => {
-  console.log(`Logged in as ${client.user.tag}`);
-});
+client.on('interactionCreate', async i => {
+  if (!i.isCommand()) return;
 
-client.on('interactionCreate', async interaction => {
-  if (!interaction.isCommand()) return;
+  // ---------- LOG SETUP ----------
+  if (i.commandName === 'setup-logs') {
+    if (!isOwner(i)) return i.reply({ content: 'Owner only.', ephemeral: true });
 
-  // ---------- SETUP LOGS ----------
-  if (interaction.commandName === 'setup-logs') {
-    if (!isGuildOwner(interaction)) {
-      return interaction.reply({
-        content: '❌ Only the **server owner** can run this command.',
-        ephemeral: true
-      });
-    }
+    data.logs[i.options.getString('type')] =
+      i.options.getChannel('channel').id;
 
-    logChannels.ban = interaction.options.getChannel('ban_log').id;
-    logChannels.kick = interaction.options.getChannel('kick_log').id;
-
-    return interaction.reply({
-      content: '✅ Log channels configured.',
-      ephemeral: true
-    });
+    saveData();
+    return i.reply({ content: '✅ Log channel set.', ephemeral: true });
   }
 
-  // ---------- PERMISSIONS ADD ----------
-  if (interaction.commandName === 'permissions-add') {
-    if (!isGuildOwner(interaction)) {
-      return interaction.reply({
-        content: '❌ Only the **server owner** can manage permissions.',
+  // ---------- PERMISSIONS ----------
+  if (i.commandName.startsWith('permissions')) {
+    if (!isOwner(i)) return i.reply({ content: 'Owner only.', ephemeral: true });
+
+    const role = i.options.getRole('role');
+    const user = i.options.getUser('user');
+
+    if (i.commandName === 'permissions-add') {
+      if (role) data.permissions.roles.push(role.id);
+      if (user) data.permissions.users.push(user.id);
+      saveData();
+      return i.reply({ content: '✅ Permission added.', ephemeral: true });
+    }
+
+    if (i.commandName === 'permissions-remove') {
+      if (role) data.permissions.roles = data.permissions.roles.filter(r => r !== role.id);
+      if (user) data.permissions.users = data.permissions.users.filter(u => u !== user.id);
+      saveData();
+      return i.reply({ content: '✅ Permission removed.', ephemeral: true });
+    }
+
+    if (i.commandName === 'permissions-list') {
+      return i.reply({
+        content:
+          `**Roles:** ${data.permissions.roles.map(r => `<@&${r}>`).join(', ') || 'None'}\n` +
+          `**Users:** ${data.permissions.users.map(u => `<@${u}>`).join(', ') || 'None'}`,
         ephemeral: true
       });
     }
-
-    const role = interaction.options.getRole('role');
-    const user = interaction.options.getUser('user');
-
-    if (!role && !user) {
-      return interaction.reply({
-        content: '❌ Provide a role or a user.',
-        ephemeral: true
-      });
-    }
-
-    if (role) permissions.roles.add(role.id);
-    if (user) permissions.users.add(user.id);
-
-    return interaction.reply({
-      content: `✅ Permission granted:\n${role ? `• Role: ${role}` : ''}\n${user ? `• User: ${user.tag}` : ''}`,
-      ephemeral: true
-    });
   }
 
   // ---------- GLOBAL BAN / UNBAN ----------
-  if (interaction.commandName === 'global-ban' || interaction.commandName === 'global-unban') {
-    if (!hasPermission(interaction.member)) {
-      return interaction.reply({
-        content: '❌ You are not authorized to use this command.',
-        ephemeral: true
-      });
-    }
+  if (!hasPermission(i.member))
+    return i.reply({ content: 'Not authorized.', ephemeral: true });
 
-    const user = interaction.options.getUser('user');
-    const reason = interaction.options.getString('reason');
-    let count = 0;
+  const user = i.options.getUser('user');
+  const reason = i.options.getString('reason');
+  const isBan = i.commandName === 'global-ban';
 
-    const embed = new EmbedBuilder()
-      .setColor(interaction.commandName === 'global-ban' ? 0xFF0000 : 0x00FF00)
-      .setTitle(interaction.commandName === 'global-ban' ? 'Global Ban Issued' : 'Global Unban Issued')
-      .addFields(
-        { name: 'User', value: `${user.tag} (${user.id})` },
-        { name: 'Moderator', value: interaction.user.tag },
-        { name: 'Reason', value: reason }
-      )
-      .setTimestamp();
+  const embed = new EmbedBuilder()
+    .setColor(isBan ? 0xff0000 : 0x00ff00)
+    .setTitle(isBan ? 'Global Ban' : 'Global Unban')
+    .addFields(
+      { name: 'User', value: `${user.tag} (${user.id})` },
+      { name: 'Moderator', value: i.user.tag },
+      { name: 'Reason', value: reason }
+    )
+    .setTimestamp();
 
-    try { await user.send({ embeds: [embed] }); } catch {}
+  try { await user.send({ embeds: [embed] }); } catch {}
+  try {
+    const admin = await client.users.fetch(ADMIN_DM_ID);
+    await admin.send({ embeds: [embed] });
+  } catch {}
+
+  let count = 0;
+  for (const [, guild] of client.guilds.cache) {
     try {
-      const admin = await client.users.fetch(ADMIN_DM_ID);
-      await admin.send({ embeds: [embed] });
+      isBan
+        ? await guild.members.ban(user, { reason })
+        : await guild.bans.remove(user, reason);
+      count++;
     } catch {}
-
-    for (const [, guild] of client.guilds.cache) {
-      try {
-        if (interaction.commandName === 'global-ban') {
-          await guild.members.ban(user, { reason });
-        } else {
-          await guild.bans.remove(user, reason);
-        }
-        count++;
-      } catch {}
-    }
-
-    if (logChannels.ban) {
-      const ch = client.channels.cache.get(logChannels.ban);
-      if (ch?.isTextBased()) ch.send({ embeds: [embed] });
-    }
-
-    return interaction.reply({
-      content: `✅ ${interaction.commandName === 'global-ban' ? 'Banned' : 'Unbanned'} in ${count} servers.`,
-      ephemeral: true
-    });
   }
+
+  log(isBan ? 'ban' : 'unban', embed);
+
+  return i.reply({
+    content: `✅ ${isBan ? 'Banned' : 'Unbanned'} in ${count} servers.`,
+    ephemeral: true
+  });
 });
 
 client.login(DISCORD_TOKEN);
