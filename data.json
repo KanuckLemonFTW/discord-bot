@@ -6,5 +6,6 @@
   "logs": {
     "ban": null,
     "unban": null
-  }
+  },
+  "roleRequestChannel": null
 }
