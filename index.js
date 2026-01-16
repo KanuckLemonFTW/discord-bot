@@ -51,14 +51,13 @@ const client = new Client({
 
 // ===== COMMANDS =====
 const commands = [
-  // Logs setup
+  // Setup logs
   new SlashCommandBuilder()
     .setName('setup-logs')
     .setDescription('Setup ban/kick log channels')
     .addChannelOption(o => o.setName('ban_log').setDescription('Ban log channel').setRequired(true))
     .addChannelOption(o => o.setName('kick_log').setDescription('Kick log channel').setRequired(true)),
 
-  // Mute/Kick log setup
   new SlashCommandBuilder()
     .setName('setup-mute-log')
     .setDescription('Set the mute log channel')
@@ -117,12 +116,18 @@ const commands = [
     .setDescription('Force verify a member by giving them the verified role')
     .addUserOption(o => o.setName('user').setDescription('Member to verify').setRequired(true)),
 
-  // Global Mute / Kick
+  // Global Mute / Unmute / Kick
   new SlashCommandBuilder()
     .setName('global-mute')
-    .setDescription('Mute a user in all servers')
+    .setDescription('Mute a user in all servers for a set duration (minutes)')
     .addUserOption(o => o.setName('user').setDescription('User to mute').setRequired(true))
-    .addStringOption(o => o.setName('reason').setDescription('Reason for mute').setRequired(true)),
+    .addStringOption(o => o.setName('reason').setDescription('Reason for mute').setRequired(true))
+    .addIntegerOption(o => o.setName('duration').setDescription('Duration in minutes').setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('global-unmute')
+    .setDescription('Unmute a user in all servers')
+    .addUserOption(o => o.setName('user').setDescription('User to unmute').setRequired(true))
+    .addStringOption(o => o.setName('reason').setDescription('Reason for unmute').setRequired(true)),
   new SlashCommandBuilder()
     .setName('global-kick')
     .setDescription('Kick a user from all servers')
@@ -150,60 +155,58 @@ client.once('ready', () => console.log(`Logged in as ${client.user.tag}`));
 
 // ===== INTERACTION HANDLER =====
 client.on('interactionCreate', async i => {
-  if (i.isCommand()) {
-    await i.deferReply({ ephemeral: true }).catch(()=>{});
+  if(i.isCommand()){
+    await i.deferReply({ ephemeral:true }).catch(()=>{});
 
     // ---------- Logs Setup ----------
-    if (i.commandName === 'setup-logs') {
-      if (!isOwner(i)) return i.editReply({ content: 'Owner only.' });
+    if(i.commandName==='setup-logs'){
+      if(!isOwner(i)) return i.editReply({ content:'Owner only.' });
       data.logs.ban = i.options.getChannel('ban_log').id;
       data.logs.unban = i.options.getChannel('kick_log').id;
       saveData();
-      return i.editReply({ content: '✅ Log channels set.' });
+      return i.editReply({ content:'✅ Log channels set.' });
     }
 
-    if (i.commandName === 'setup-mute-log') {
-      if (!i.member.roles.cache.has(MOD_ROLE_ID)) return i.editReply({ content: '❌ Not authorized.' });
+    if(i.commandName==='setup-mute-log'){
+      if(!i.member.roles.cache.has(MOD_ROLE_ID)) return i.editReply({ content:'❌ Not authorized.' });
       data.logs.mute = i.options.getChannel('channel').id;
       saveData();
-      return i.editReply({ content: '✅ Mute log channel set.' });
+      return i.editReply({ content:'✅ Mute log channel set.' });
     }
 
-    if (i.commandName === 'setup-kick-log') {
-      if (!i.member.roles.cache.has(MOD_ROLE_ID)) return i.editReply({ content: '❌ Not authorized.' });
+    if(i.commandName==='setup-kick-log'){
+      if(!i.member.roles.cache.has(MOD_ROLE_ID)) return i.editReply({ content:'❌ Not authorized.' });
       data.logs.kick = i.options.getChannel('channel').id;
       saveData();
-      return i.editReply({ content: '✅ Kick log channel set.' });
+      return i.editReply({ content:'✅ Kick log channel set.' });
     }
 
     // ---------- Permissions ----------
-    if (i.commandName.startsWith('permissions')) {
-      if (!isOwner(i)) return i.editReply({ content: 'Owner only.' });
+    if(i.commandName.startsWith('permissions')){
+      if(!isOwner(i)) return i.editReply({ content:'Owner only.' });
       const role = i.options.getRole('role');
       const user = i.options.getUser('user');
 
-      if (i.commandName === 'permissions-add') {
-        if (role) data.permissions.roles.push(role.id);
-        if (user) data.permissions.users.push(user.id);
+      if(i.commandName==='permissions-add'){
+        if(role) data.permissions.roles.push(role.id);
+        if(user) data.permissions.users.push(user.id);
         saveData();
-        return i.editReply({ content: '✅ Permission added.' });
+        return i.editReply({ content:'✅ Permission added.' });
       }
-      if (i.commandName === 'permissions-remove') {
-        if (role) data.permissions.roles = data.permissions.roles.filter(r => r!==role.id);
-        if (user) data.permissions.users = data.permissions.users.filter(u => u!==user.id);
+      if(i.commandName==='permissions-remove'){
+        if(role) data.permissions.roles = data.permissions.roles.filter(r=>r!==role.id);
+        if(user) data.permissions.users = data.permissions.users.filter(u=>u!==user.id);
         saveData();
-        return i.editReply({ content: '✅ Permission removed.' });
+        return i.editReply({ content:'✅ Permission removed.' });
       }
-      if (i.commandName === 'permissions-list') {
-        return i.editReply({
-          content: `**Roles:** ${data.permissions.roles.map(r => `<@&${r}>`).join(', ')||'None'}\n**Users:** ${data.permissions.users.map(u=>`<@${u}>`).join(', ')||'None'}`
-        });
+      if(i.commandName==='permissions-list'){
+        return i.editReply({ content:`**Roles:** ${data.permissions.roles.map(r=>`<@&${r}>`).join(',')||'None'}\n**Users:** ${data.permissions.users.map(u=>`<@${u}>`).join(',')||'None'}` });
       }
     }
 
     // ---------- Global Ban / Unban ----------
-    if (['global-ban','global-unban'].includes(i.commandName)) {
-      if (!hasPermission(i.member)) return i.editReply({ content: '❌ Not authorized.' });
+    if(['global-ban','global-unban'].includes(i.commandName)){
+      if(!hasPermission(i.member)) return i.editReply({ content:'❌ Not authorized.' });
 
       const user = i.options.getUser('user');
       const reason = i.options.getString('reason');
@@ -213,14 +216,14 @@ client.on('interactionCreate', async i => {
         .setTitle(isBan?'Global Ban':'Global Unban')
         .setColor(isBan?0xff0000:0x00ff00)
         .addFields(
-          { name:'User', value:`${user.tag} (${user.id})`},
+          { name:'User', value:`${user.tag} (${user.id})` },
           { name:'Moderator', value:i.user.tag },
           { name:'Reason', value:reason }
         )
         .setTimestamp();
 
-      try { await user.send({ embeds: [embed] }); } catch {}
-      try { const admin = await client.users.fetch(ADMIN_DM_ID); await admin.send({ embeds:[embed] }); } catch {}
+      try{ await user.send({ embeds:[embed] }); }catch{}
+      try{ const admin = await client.users.fetch(ADMIN_DM_ID); await admin.send({ embeds:[embed] }); }catch{}
 
       let count=0;
       for(const [,guild] of client.guilds.cache){
@@ -235,61 +238,122 @@ client.on('interactionCreate', async i => {
       return i.editReply({ content:`✅ ${isBan?'Banned':'Unbanned'} in ${count} servers.` });
     }
 
-    // ---------- Role Request ----------
-    if (i.commandName==='setup-rolerequest') {
-      if (!isOwner(i)) return i.editReply({ content:'Owner only.' });
-      data.roleRequestChannel=i.options.getChannel('channel').id;
-      saveData();
-      return i.editReply({ content:'✅ Role request channel set.' });
-    }
-
-    if (i.commandName==='request-role') {
-      const requestedRole = i.options.getRole('roles');
-      const approver = i.options.getUser('approved_by');
-      const notes = i.options.getString('notes')||'No notes provided';
-
-      const member = await i.guild.members.fetch(approver.id).catch(()=>null);
-      if(!member) return i.editReply({ content:'❌ Approver not found.' });
-      if(!member.roles.cache.has(ROLE_PERMISSIONS_ROLE_ID)) return i.editReply({ content:'❌ Approver does not have Role Permissions Role.' });
-      if(member.roles.highest.position < requestedRole.position) return i.editReply({ content:'❌ Approver cannot assign roles higher than top role.' });
-
-      let channel = client.channels.cache.get(data.roleRequestChannel);
-      if(!channel) channel = await client.channels.fetch(data.roleRequestChannel).catch(()=>null);
-      if(!channel) return i.editReply({ content:'❌ Cannot find role request channel.' });
+    // ---------- Global Mute ----------
+    if(i.commandName==='global-mute'){
+      if(!i.member.roles.cache.has(MOD_ROLE_ID)) return i.editReply({ content:'❌ Not authorized.' });
+      const user = i.options.getUser('user');
+      const reason = i.options.getString('reason');
+      const duration = i.options.getInteger('duration');
 
       const embed = new EmbedBuilder()
-        .setTitle('Role Request')
-        .setColor(0x00AAFF)
+        .setTitle('Global Mute')
+        .setColor(0xFFAA00)
         .addFields(
-          { name:'Requester', value:i.user.tag },
-          { name:'Role Requested', value:requestedRole.name },
-          { name:'Approver', value:approver.tag },
-          { name:'Notes', value:notes }
+          { name:'User', value:`${user.tag} (${user.id})` },
+          { name:'Moderator', value:i.user.tag },
+          { name:'Reason', value:reason },
+          { name:'Duration', value:`${duration} minutes` }
         )
         .setTimestamp();
 
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`approve_${i.user.id}_${requestedRole.id}_${approver.id}`)
-          .setLabel('Approve').setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-          .setCustomId(`deny_${i.user.id}_${requestedRole.id}_${approver.id}`)
-          .setLabel('Deny').setStyle(ButtonStyle.Danger)
-      );
+      try{ await user.send({ embeds:[embed] }); }catch{}
 
-      await channel.send({ embeds:[embed], components:[row] });
-      return i.editReply({ content:'✅ Role request submitted.' });
+      let count=0;
+      for(const [,guild] of client.guilds.cache){
+        try{
+          const member = await guild.members.fetch(user.id);
+          await member.timeout(duration*60*1000,reason);
+          count++;
+        }catch{}
+      }
+
+      if(data.logs.mute){
+        const logChannel = client.channels.cache.get(data.logs.mute);
+        if(logChannel?.isTextBased()) logChannel.send({ embeds:[embed] });
+      }
+
+      return i.editReply({ content:`✅ ${user.tag} muted for ${duration} minutes in ${count} servers.` });
+    }
+
+    // ---------- Global Unmute ----------
+    if(i.commandName==='global-unmute'){
+      if(!i.member.roles.cache.has(MOD_ROLE_ID)) return i.editReply({ content:'❌ Not authorized.' });
+      const user = i.options.getUser('user');
+      const reason = i.options.getString('reason');
+
+      const embed = new EmbedBuilder()
+        .setTitle('Global Unmute')
+        .setColor(0x00AAFF)
+        .addFields(
+          { name:'User', value:`${user.tag} (${user.id})` },
+          { name:'Moderator', value:i.user.tag },
+          { name:'Reason', value:reason }
+        )
+        .setTimestamp();
+
+      try{ await user.send({ embeds:[embed] }); }catch{}
+
+      let count=0;
+      for(const [,guild] of client.guilds.cache){
+        try{
+          const member = await guild.members.fetch(user.id);
+          await member.timeout(null,reason);
+          count++;
+        }catch{}
+      }
+
+      if(data.logs.mute){
+        const logChannel = client.channels.cache.get(data.logs.mute);
+        if(logChannel?.isTextBased()) logChannel.send({ embeds:[embed] });
+      }
+
+      return i.editReply({ content:`✅ ${user.tag} unmuted in ${count} servers.` });
+    }
+
+    // ---------- Global Kick ----------
+    if(i.commandName==='global-kick'){
+      if(!i.member.roles.cache.has(MOD_ROLE_ID)) return i.editReply({ content:'❌ Not authorized.' });
+      const user = i.options.getUser('user');
+      const reason = i.options.getString('reason');
+
+      const embed = new EmbedBuilder()
+        .setTitle('Global Kick')
+        .setColor(0xFF0000)
+        .addFields(
+          { name:'User', value:`${user.tag} (${user.id})` },
+          { name:'Moderator', value:i.user.tag },
+          { name:'Reason', value:reason }
+        )
+        .setTimestamp();
+
+      try{ await user.send({ embeds:[embed] }); }catch{}
+
+      let count=0;
+      for(const [,guild] of client.guilds.cache){
+        try{
+          const member = await guild.members.fetch(user.id);
+          await member.kick(reason);
+          count++;
+        }catch{}
+      }
+
+      if(data.logs.kick){
+        const logChannel = client.channels.cache.get(data.logs.kick);
+        if(logChannel?.isTextBased()) logChannel.send({ embeds:[embed] });
+      }
+
+      return i.editReply({ content:`✅ ${user.tag} kicked from ${count} servers.` });
     }
 
     // ---------- Force Verify ----------
-    if (i.commandName==='config-verifylog') {
+    if(i.commandName==='config-verifylog'){
       if(!isOwner(i)) return i.editReply({ content:'Owner only.' });
       data.verifyLogChannel = i.options.getChannel('channel').id;
       saveData();
       return i.editReply({ content:'✅ Verify log channel set.' });
     }
 
-    if (i.commandName==='forceverify') {
+    if(i.commandName==='forceverify'){
       if(!i.member.roles.cache.has(MOD_ROLE_ID)) return i.editReply({ content:'❌ Not authorized.' });
       const targetUser = i.options.getUser('user');
       const targetMember = await i.guild.members.fetch(targetUser.id);
@@ -316,111 +380,74 @@ client.on('interactionCreate', async i => {
       return i.editReply({ content:`✅ ${targetUser.tag} has been force verified.` });
     }
 
-    // ---------- Global Mute ----------
-    if (i.commandName==='global-mute') {
-      if(!i.member.roles.cache.has(MOD_ROLE_ID)) return i.editReply({ content:'❌ Not authorized.' });
-      const user = i.options.getUser('user');
-      const reason = i.options.getString('reason');
-
-      const embed = new EmbedBuilder()
-        .setTitle('Global Mute')
-        .setColor(0xFFAA00)
-        .addFields(
-          { name:'User', value:`${user.tag} (${user.id})` },
-          { name:'Moderator', value:i.user.tag },
-          { name:'Reason', value:reason }
-        )
-        .setTimestamp();
-
-      try { await user.send({ embeds:[embed] }); } catch {}
-
-      let count=0;
-      for(const [,guild] of client.guilds.cache){
-        try{
-          const member = await guild.members.fetch(user.id);
-          const muteRole = guild.roles.cache.find(r=>r.name.toLowerCase()==='muted');
-          if(muteRole) await member.roles.add(muteRole);
-          count++;
-        }catch{}
-      }
-
-      if(data.logs.mute){
-        const logChannel = client.channels.cache.get(data.logs.mute);
-        if(logChannel?.isTextBased()) logChannel.send({ embeds:[embed] });
-      }
-
-      return i.editReply({ content:`✅ ${user.tag} has been muted in ${count} servers.` });
+    // ---------- Role Requests ----------
+    if(i.commandName==='setup-rolerequest'){
+      if(!isOwner(i)) return i.editReply({ content:'Owner only.' });
+      data.roleRequestChannel = i.options.getChannel('channel').id;
+      saveData();
+      return i.editReply({ content:'✅ Role request channel set.' });
     }
 
-    // ---------- Global Kick ----------
-    if (i.commandName==='global-kick') {
-      if(!i.member.roles.cache.has(MOD_ROLE_ID)) return i.editReply({ content:'❌ Not authorized.' });
-      const user = i.options.getUser('user');
-      const reason = i.options.getString('reason');
+    if(i.commandName==='request-role'){
+      const requestedRole = i.options.getRole('roles');
+      const approver = i.options.getUser('approved_by');
+      const notes = i.options.getString('notes') || 'No notes provided';
+
+      const approverMember = await i.guild.members.fetch(approver.id).catch(()=>null);
+      if(!approverMember) return i.editReply({ content:'❌ Approver not found.' });
+      if(!approverMember.roles.cache.has(ROLE_PERMISSIONS_ROLE_ID)) return i.editReply({ content:'❌ Approver missing role perms.' });
+      if(approverMember.roles.highest.position < requestedRole.position) return i.editReply({ content:'❌ Approver cannot assign role this high.' });
+
+      const channel = await client.channels.fetch(data.roleRequestChannel).catch(()=>null);
+      if(!channel?.isTextBased()) return i.editReply({ content:'❌ Role request channel not found.' });
 
       const embed = new EmbedBuilder()
-        .setTitle('Global Kick')
-        .setColor(0xFF0000)
+        .setTitle('Role Request')
+        .setColor(0x00AAFF)
         .addFields(
-          { name:'User', value:`${user.tag} (${user.id})` },
-          { name:'Moderator', value:i.user.tag },
-          { name:'Reason', value:reason }
+          { name:'Requester', value:i.user.tag },
+          { name:'Role Requested', value:requestedRole.name },
+          { name:'Approver', value:approver.tag },
+          { name:'Notes', value:notes }
         )
         .setTimestamp();
 
-      try { await user.send({ embeds:[embed] }); } catch {}
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`approve_${i.user.id}_${requestedRole.id}_${approver.id}`)
+          .setLabel('Approve').setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`deny_${i.user.id}_${requestedRole.id}_${approver.id}`)
+          .setLabel('Deny').setStyle(ButtonStyle.Danger)
+      );
 
-      let count=0;
-      for(const [,guild] of client.guilds.cache){
-        try{
-          const member = await guild.members.fetch(user.id);
-          await member.kick(reason);
-          count++;
-        }catch{}
-      }
-
-      if(data.logs.kick){
-        const logChannel = client.channels.cache.get(data.logs.kick);
-        if(logChannel?.isTextBased()) logChannel.send({ embeds:[embed] });
-      }
-
-      return i.editReply({ content:`✅ ${user.tag} has been kicked from ${count} servers.` });
+      await channel.send({ embeds:[embed], components:[row] });
+      return i.editReply({ content:'✅ Role request submitted.' });
     }
   }
 
   // ---------- Button handler for role requests ----------
   if(i.isButton()){
     const [action, requesterId, roleId, approverId] = i.customId.split('_');
+    if(i.user.id!==approverId) return i.reply({ content:'❌ Unauthorized click. Security team notified.', ephemeral:true });
+
     const requestedRole = i.guild.roles.cache.get(roleId);
     if(!requestedRole) return i.reply({ content:'❌ Role not found.', ephemeral:true });
 
-    let approverMember;
-    try{ approverMember = await i.guild.members.fetch(approverId); }catch{}
+    const approverMember = await i.guild.members.fetch(approverId).catch(()=>null);
     if(!approverMember) return i.reply({ content:'❌ Approver not found.', ephemeral:true });
+    if(!approverMember.roles.cache.has(ROLE_PERMISSIONS_ROLE_ID)) return i.reply({ content:'❌ Approver missing role perms.', ephemeral:true });
+    if(approverMember.roles.highest.position < requestedRole.position) return i.reply({ content:'❌ Approver cannot assign role this high.', ephemeral:true });
 
-    if(i.user.id!==approverMember.id){
-      await i.reply({ content:'❌ Unauthorized click. Security team has been notified.', ephemeral:true });
-      const channel = i.channel;
-      if(channel?.isTextBased()) channel.send({ content:`⚠️ <@${approverMember.id}>, user ${i.user.tag} tried to click your role request buttons.` });
-      try{ await approverMember.send(`⚠️ User ${i.user.tag} tried to interact with a role request they are not authorized for.`); }catch{}
-      return;
-    }
-
-    if(!approverMember.roles.cache.has(ROLE_PERMISSIONS_ROLE_ID))
-      return i.reply({ content:'❌ You no longer have the Role Permissions Role.', ephemeral:true });
-    if(approverMember.roles.highest.position < requestedRole.position)
-      return i.reply({ content:'❌ Cannot assign role higher than your top role.', ephemeral:true });
-
-    let requesterMember;
-    try{ requesterMember = await i.guild.members.fetch(requesterId); }catch{}
+    const requesterMember = await i.guild.members.fetch(requesterId).catch(()=>null);
     if(!requesterMember) return i.reply({ content:'❌ Requester not found.', ephemeral:true });
 
     if(action==='approve'){
       await requesterMember.roles.add(requestedRole);
-      try{ await requesterMember.send({ content:`✅ Your request for role ${requestedRole.name} was approved by ${approverMember.user.tag}` }); }catch{}
+      try{ await requesterMember.send({ content:`✅ Your request for ${requestedRole.name} was approved by ${approverMember.user.tag}` }); }catch{}
       await i.update({ content:`✅ Role approved by <@${approverMember.id}>.`, components:[] });
     } else if(action==='deny'){
-      try{ await requesterMember.send({ content:`❌ Your request for role ${requestedRole.name} was denied by ${approverMember.user.tag}` }); }catch{}
+      try{ await requesterMember.send({ content:`❌ Your request for ${requestedRole.name} was denied by ${approverMember.user.tag}` }); }catch{}
       await i.update({ content:`❌ Role denied by <@${approverMember.id}>.`, components:[] });
     }
   }
